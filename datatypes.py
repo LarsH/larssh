@@ -2,6 +2,7 @@ from basic_datatypes import *
 
 SSH_MSG_DEBUG = 4
 SSH_MSG_KEXINIT = 20
+SSH_MSG_NEWKEYS = 21
 SSH_MSG_KEXDH_INIT = 30
 SSH_MSG_KEXDH_REPLY = 31
 
@@ -65,6 +66,10 @@ class Debug(Data):
                       always_display=Bool,
                       message=String,
                       lang=String)
+
+class NewKeys(Data):
+    _identifier = SSH_MSG_NEWKEYS
+    desc = createDesc('NewKeys',identifier=Byte)
 
 tmp = [eval(d) for d in dir()]
 packet_parsers = {e._identifier: e for e in tmp if hasattr(e, '_identifier')}

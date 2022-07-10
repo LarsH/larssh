@@ -6,7 +6,6 @@ import struct
 from datatypes import *
 import hostkey
 
-
 IDSTRING = b'SSH-2.0-pyssh'
 ADDR = ('0.0.0.0', 2222)
 
@@ -63,6 +62,15 @@ class Transport(object):
 		this.conn = None
 		this.remoteAddr = None
 
+		# Keys as defined in RFC4253 7.2
+		this.sess_id = None
+		this.iv_cs = None
+		this.iv_sc = None
+		this.key_cs = None
+		this.key_sc = None
+		this.mac_key_cs = None
+		this.mac_key_sc = None
+
 		this.serv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 		for i in range(10):
 			try:
@@ -105,46 +113,67 @@ class Transport(object):
 				languages_algorithms_server_to_client=NameList(value=[]),
 				first_kex_packets_follows=Bool(False),
 				reserved=Uint32(0))
-		I_S = String(serverkex.pack())
-		this.sendPacket(I_S.value)
+		this.sendPacket(serverkex)
 
 		# RFC4253 Section8. Diffie-Hellman key exchange
 		data = this.getPacket()
 		clientKex = this.parsePacket(data)
 		assert clientKex.__class__ is KexDHInit, clientKex
-		e = clientKex.e
-		f, K = map(Mpint, diffie_hellman_group_14(e.value))
 
-		K_S = String(HOST_KEY.pubkey().pack())
+		f, K = map(Mpint, diffie_hellman_group_14(clientKex.e.value))
 
+		K_S=String(HOST_KEY.pubkey().pack())
 		tmp = DataToHash(V_C=String(client_id),
 				V_S=String(IDSTRING),
 				I_C=I_C,
-				I_S=I_S,
+				I_S=String(serverkex.pack()),
 				K_S=K_S,
-				e=e,
+				e=clientKex.e,
 				f=f,
 				K=K)
-		print(tmp)
-		print(tmp.pack())
 		H = hashlib.sha256(tmp.pack()).digest()
 
-		# Must be doubly hashed, as last paragraph in section 8.0 says.
-		signature = HOST_KEY.sign(SHA256_prefix + hashlib.sha256(H).digest())
+		if this.sess_id is None:
+			# RFC4253 7.2: first exchange hash is session id
+			this.sess_id = H
 
+		# Must be hashed again before signing, paragraph before RFC4253 8.1
+		signature = HOST_KEY.sign(SHA256_prefix + hashlib.sha256(H).digest())
 		reply = KexDHReply(identifier=Byte(SSH_MSG_KEXDH_REPLY),
 				hostkey=K_S,
 				f=f,
 				sig=String(signature.pack()))
 
-		d = Debug(identifier=Byte(SSH_MSG_DEBUG),always_display=Bool(True),message=String(b'testing1'),lang=String(b''))
+		this.sendPacket(reply)
+
+		data = this.getPacket()
+		nkpacket = this.parsePacket(data)
+		assert nkpacket.__class__ is NewKeys, nkpacket
+
+		# Creating the encryption keys as defined in RFC4253 7.2
+		def HASH(x, l):
+			retval = hashlib.sha256(K.pack() + H + x + this.sess_id).digest()
+			while len(retval) < l:
+				retval += hashlib.sha256(K.pack() + H + retval).digest()
+			return retval[:l]
+
+		this.sendPacket(nkpacket.pack())
+
+		this.iv_cs = HASH(b'A', 16)
+		this.iv_sc = HASH(b'B', 16)
+		this.key_cs = HASH(b'C', 16)
+		this.key_sc = HASH(b'D', 16)
+		this.mac_key_cs = HASH(b'E', 16)
+		this.mac_key_sc = HASH(b'F', 16)
+
+	def sendDebug(this, message):
+		if message.__class__ is str:
+			message = message.encode()
+		d = Debug(identifier=Byte(SSH_MSG_DEBUG),
+				always_display=Bool(True),
+				message=String(message),
+				lang=String(b''))
 		this.sendPacket(d.pack())
-
-		this.sendPacket(reply.pack())
-
-		d.message.value = b'test2'
-		this.sendPacket(d.pack())
-
 
 	def recvuntil(this, target):
 		retval = b''
@@ -163,6 +192,8 @@ class Transport(object):
 		return payload
 
 	def sendPacket(this, payload):
+		if payload.__class__ is not bytes:
+			payload = payload.pack()
 		block_len = 16
 		min_padding = 4
 		padding_len = min_padding + block_len - (min_padding + 5 + len(payload))%block_len
