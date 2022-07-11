@@ -71,10 +71,11 @@ class Transport(object):
 		this.mac_key_cs = None
 		this.mac_key_sc = None
 
-		this.serv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+		this.serv = socket.socket()
 		for i in range(10):
 			try:
-				this.serv.bind(addr)
+				ai = socket.getaddrinfo(*addr)
+				this.serv.bind(ai[0][-1])
 				break
 			except OSError as e:
 				print(e)
@@ -184,7 +185,8 @@ class Transport(object):
 	def getPacket(this):
 		packet_length, = struct.unpack('>I', this.conn.recv(4))
 		packet = this.conn.recv(packet_length)
-		mac = this.conn.recv(this.mac_len)
+		if(this.mac_len > 0):
+			mac = this.conn.recv(this.mac_len)
 
 		padding_length = packet[0]
 		payload = packet[1:-padding_length]

@@ -1,19 +1,10 @@
 import struct
-from collections import namedtuple
-
-
-def createDesc(name, **kwargs):
-	keys = []
-	values = []
-	for k, v in kwargs.items():
-		keys.append(k)
-		values.append(v())
-	return namedtuple(name, keys)(*values)
+from collections import OrderedDict
 
 
 class Data(object):
-	desc = createDesc('DataBaseClass')
 	repeats = 1
+	_fields = {"value": None}
 
 	def __init__(this, value=None, **kwargs):
 		if value is not None:
@@ -29,25 +20,27 @@ class Data(object):
 	def _parse(this, data):
 		klist = []
 		vlist = []
-		for name, datatype in zip(this.desc._fields, this.desc):
+		if hasattr(this, '_identifier'):
+			identifier, data = Byte()._parse(data)
+			assert identifier == this._identifier
+		for name, datatype in this._fields.items():
 			val, data = datatype._parse(data)
 			klist.append(name)
 			vlist.append(val)
 		obj = this.__class__(**dict(zip(klist, vlist)))
-		if hasattr(obj, '_identifier'):
-			assert obj.identifier == obj._identifier, \
-				repr((obj.identifier, obj._identifier))
 		return obj, data
 
 	def pack(this):
 		retval = b''
-		for name in this.desc._fields:
+		if hasattr(this, '_identifier'):
+			retval += Byte(this._identifier).pack()
+		for name in this._fields:
 			retval += getattr(this, name).pack()
 		return retval
 
 	def __repr__(this):
-		data = [getattr(this, n) for n in this.desc._fields]
-		return repr(this.desc.__class__(*data))
+		data = [n+'='+repr(getattr(this, n)) for n in this._fields if hasattr(this, n)]
+		return this.__class__.__name__ + '(' + ', '.join(data) + ')'
 
 	def __call__(this):
 		'''For cases when repeated object is already instanciated'''
@@ -71,7 +64,7 @@ class IntData(Data):
 
 
 class Byte(IntData):
-	desc = createDesc('Byte', value=bytes)
+	_fields = OrderedDict(value=bytes)
 	size = 1
 	value = b''
 
@@ -90,9 +83,6 @@ class Byte(IntData):
 		this.size *= val
 		return this
 
-	def __repr__(this):
-		return 'Byte(%s)' % repr(this.value)
-
 	def pack(this):
 		return this.value
 
@@ -109,7 +99,7 @@ class Byte(IntData):
 
 
 class Uint32(IntData):
-	desc = createDesc('Uint32', value=Data)
+	_fields=OrderedDict(value=Data())
 
 	def _parse(this, data):
 		assert len(data) >= 4
@@ -124,7 +114,6 @@ class Uint32(IntData):
 
 
 class Uint64(IntData):
-	desc = createDesc('Uint64', value=Data)
 
 	def _parse(this, data):
 		assert len(data) >= 8
@@ -139,14 +128,9 @@ class Uint64(IntData):
 
 
 class Bool(Data):
-	desc = createDesc('Bool', value=Data)
-
 	def _parse(this, data):
 		tmp, data = Byte()._parse(data)
 		return (Bool(tmp.value != b'\x00'), data)
-
-	def __repr__(this):
-		return 'Bool(%s)' % repr(this.value)
 
 	def pack(this):
 		if this.value:
@@ -156,23 +140,17 @@ class Bool(Data):
 
 
 class String(Data):
-	desc = createDesc('String', value=str)
 
 	def _parse(this, data):
 		length, data = Uint32()._parse(data)
 		tmp, data = (Byte()*(length.value))._parse(data)
 		return String(tmp.value), data
 
-	def __repr__(this):
-		return 'String(%s)' % repr(this.value)
-
 	def pack(this):
 		return Uint32(len(this.value)).pack() + this.value
 
 
 class Mpint(IntData):
-	desc = createDesc('Mpint', value=Data)
-
 	def pack(this):
 		def bit_length(x):
 			x = abs(x)
@@ -207,7 +185,6 @@ class Mpint(IntData):
 		return Mpint(val), data
 
 class NameList(Data):
-	desc = createDesc('NameList', value=Data)
 
 	def _parse(this, data):
 		s, data = String()._parse(data)
@@ -218,32 +195,3 @@ class NameList(Data):
 
 	def pack(this):
 		return String(b','.join(this.value)).pack()
-
-
-SSH_MSG_KEXINIT = 20
-
-
-class KexInit(Data):
-	_identifier = SSH_MSG_KEXINIT
-	desc = createDesc('KexInit',
-		identifier=Byte,
-		cookie=Byte()*16,
-		kex_algorithms=NameList,
-		server_host_key_algorithms=NameList,
-		encryption_algorithms_client_to_server=NameList,
-		encryption_algorithms_server_to_client=NameList,
-		mac_algorithms_client_to_server=NameList,
-		mac_algorithms_server_to_client=NameList,
-		compression_algorithms_client_to_server=NameList,
-		compression_algorithms_server_to_client=NameList,
-		languages_algorithms_client_to_server=NameList,
-		languages_algorithms_server_to_client=NameList,
-		first_kex_packets_follows=Bool,
-		reserved=Uint32)
-
-
-
-tmp = [eval(d) for d in dir()]
-packet_parsers = {e._identifier:e for e in tmp if hasattr(e,'_identifier')}
-del tmp
-
