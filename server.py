@@ -2,6 +2,7 @@ import socket
 import hashlib
 import random
 import struct
+from ucryptolib import aes
 
 from datatypes import *
 import hostkey
@@ -61,13 +62,11 @@ class Transport(object):
 		this.serv = None # Must be set for destructor to not complain
 		this.conn = None
 		this.remoteAddr = None
-
-		# Keys as defined in RFC4253 7.2
 		this.sess_id = None
-		this.iv_cs = None
-		this.iv_sc = None
-		this.key_cs = None
-		this.key_sc = None
+
+		this.sc_aes = None
+		this.cs_aes = None
+
 		this.mac_key_cs = None
 		this.mac_key_sc = None
 
@@ -160,12 +159,19 @@ class Transport(object):
 
 		this.sendPacket(nkpacket.pack())
 
-		this.iv_cs = HASH(b'A', 16)
-		this.iv_sc = HASH(b'B', 16)
-		this.key_cs = HASH(b'C', 16)
-		this.key_sc = HASH(b'D', 16)
+		iv_cs = HASH(b'A', 16)
+		iv_sc = HASH(b'B', 16)
+		key_cs = HASH(b'C', 16)
+		key_sc = HASH(b'D', 16)
 		this.mac_key_cs = HASH(b'E', 16)
 		this.mac_key_sc = HASH(b'F', 16)
+		this.mac_len = 32
+
+		# AES CTR mode is somewhat undocumented in micropython
+		this.sc_aes = aes(key_sc, 6, iv_sc)
+		this.cs_aes = aes(key_cs, 6, iv_cs)
+
+		print(this.parsePacket(this.getPacket()))
 
 	def sendDebug(this, message):
 		if message.__class__ is str:
@@ -183,10 +189,18 @@ class Transport(object):
 		return retval
 
 	def getPacket(this):
-		packet_length, = struct.unpack('>I', this.conn.recv(4))
+		tmp = this.conn.recv(4)
+		if this.cs_aes is not None:
+			tmp = this.cs_aes.decrypt(tmp)
+		packet_length, = struct.unpack('>I', tmp)
+
 		packet = this.conn.recv(packet_length)
+		if this.cs_aes is not None:
+			packet = this.cs_aes.decrypt(packet)
+
 		if(this.mac_len > 0):
 			mac = this.conn.recv(this.mac_len)
+			# TODO: verify mac
 
 		padding_length = packet[0]
 		payload = packet[1:-padding_length]
@@ -202,6 +216,9 @@ class Transport(object):
 		padding = b'\x00'*padding_len
 		packet_len = 1 + len(payload) + padding_len
 		data = struct.pack('>IB', packet_len, padding_len) + payload + padding
+
+		if this.sc_aes is not None:
+			data = this.sc_aes.encrypt(data)
 
 		if this.mac_len != 0:
 			raise NotImplementedError()

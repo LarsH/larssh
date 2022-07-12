@@ -1,6 +1,7 @@
 from basic_datatypes import *
 
 SSH_MSG_DEBUG = 4
+SSH_MSG_SERVICE_REQUEST = 5
 SSH_MSG_KEXINIT = 20
 SSH_MSG_NEWKEYS = 21
 SSH_MSG_KEXDH_INIT = 30
@@ -69,6 +70,12 @@ class Debug(Data):
 class NewKeys(Data):
     _identifier = SSH_MSG_NEWKEYS
     _fields = {}
+
+
+class ServiceRequest(Data):
+    _identifier = SSH_MSG_SERVICE_REQUEST
+    _fields = {'ServiceName':String()}
+
 
 tmp = [eval(d) for d in dir()]
 packet_parsers = {e._identifier: e for e in tmp if hasattr(e, '_identifier')}
