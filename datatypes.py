@@ -61,7 +61,7 @@ class DataToHash(Data):
 
 class Debug(Data):
     _identifier = SSH_MSG_DEBUG
-    fields = OrderedDict(
+    _fields = OrderedDict(
                       always_display=Bool(),
                       message=String(),
                       lang=String())

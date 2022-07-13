@@ -28,6 +28,14 @@ def diffie_hellman_group_14(e):
 	K = pow(e, y, p)
 	return f, K
 
+def hmac(key, data):
+	assert len(key) == 32 # RFC6668+2 says keylen for sha256 is 32 bytes
+	key = key + b'\x00'*32 # padded key is 64 bytes
+	i = bytes(c^0x36 for c in key)
+	o = bytes(c^0x5c for c in key)
+	tmp = hashlib.sha256(i + data).digest()
+	return hashlib.sha256(o + tmp).digest()
+
 
 class HostKey(object):
 	def __init__(this, n,e,d):
@@ -69,6 +77,9 @@ class Transport(object):
 
 		this.mac_key_cs = None
 		this.mac_key_sc = None
+
+		this.cs_packet_count = 0
+		this.sc_packet_count = 0
 
 		this.serv = socket.socket()
 		for i in range(10):
@@ -163,20 +174,21 @@ class Transport(object):
 		iv_sc = HASH(b'B', 16)
 		key_cs = HASH(b'C', 16)
 		key_sc = HASH(b'D', 16)
-		this.mac_key_cs = HASH(b'E', 16)
-		this.mac_key_sc = HASH(b'F', 16)
+		this.mac_key_cs = HASH(b'E', 32)
+		this.mac_key_sc = HASH(b'F', 32)
 		this.mac_len = 32
 
 		# AES CTR mode is somewhat undocumented in micropython
 		this.sc_aes = aes(key_sc, 6, iv_sc)
 		this.cs_aes = aes(key_cs, 6, iv_cs)
 
+		this.sendDebug('Testing encryption and MAC')
 		print(this.parsePacket(this.getPacket()))
 
 	def sendDebug(this, message):
 		if message.__class__ is str:
 			message = message.encode()
-		d = Debug(identifier=Byte(SSH_MSG_DEBUG),
+		d = Debug(
 				always_display=Bool(True),
 				message=String(message),
 				lang=String(b''))
@@ -189,10 +201,10 @@ class Transport(object):
 		return retval
 
 	def getPacket(this):
-		tmp = this.conn.recv(4)
+		lenbuf = this.conn.recv(4)
 		if this.cs_aes is not None:
-			tmp = this.cs_aes.decrypt(tmp)
-		packet_length, = struct.unpack('>I', tmp)
+			lenbuf = this.cs_aes.decrypt(lenbuf)
+		packet_length, = struct.unpack('>I', lenbuf)
 
 		packet = this.conn.recv(packet_length)
 		if this.cs_aes is not None:
@@ -200,10 +212,13 @@ class Transport(object):
 
 		if(this.mac_len > 0):
 			mac = this.conn.recv(this.mac_len)
-			# TODO: verify mac
+			t = this.cs_packet_count.to_bytes(4,'big')
+			cmac = hmac(this.mac_key_cs, t+lenbuf+packet)
+			assert mac == cmac
 
 		padding_length = packet[0]
 		payload = packet[1:-padding_length]
+		this.cs_packet_count += 1
 
 		return payload
 
@@ -217,13 +232,17 @@ class Transport(object):
 		packet_len = 1 + len(payload) + padding_len
 		data = struct.pack('>IB', packet_len, padding_len) + payload + padding
 
+		if this.mac_len != 0:
+			t = this.sc_packet_count.to_bytes(4,'big')
+			mac = hmac(this.mac_key_sc, t + data)
+		else:
+			mac = b''
+
 		if this.sc_aes is not None:
 			data = this.sc_aes.encrypt(data)
 
-		if this.mac_len != 0:
-			raise NotImplementedError()
-
-		this.conn.send(data)
+		this.conn.send(data + mac)
+		this.sc_packet_count += 1
 
 	def __del__(this):
 		print("Closing...")
