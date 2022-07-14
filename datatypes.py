@@ -1,11 +1,19 @@
 from basic_datatypes import *
 
+# RF4250,4.1.2
+SSH_MSG_DISCONNECT = 1
 SSH_MSG_DEBUG = 4
 SSH_MSG_SERVICE_REQUEST = 5
+SSH_MSG_SERVICE_ACCEPT = 6
 SSH_MSG_KEXINIT = 20
 SSH_MSG_NEWKEYS = 21
 SSH_MSG_KEXDH_INIT = 30
 SSH_MSG_KEXDH_REPLY = 31
+SSH_MSG_USERAUTH_REQUEST = 50
+SSH_MSG_USERAUTH_SUCCESS = 52
+SSH_MSG_CHANNEL_OPEN = 90
+SSH_MSG_CHANNEL_OPEN_CONFIRMATION = 91
+
 
 class KexInit(Data):
     _identifier = SSH_MSG_KEXINIT
@@ -75,6 +83,72 @@ class NewKeys(Data):
 class ServiceRequest(Data):
     _identifier = SSH_MSG_SERVICE_REQUEST
     _fields = {'ServiceName':String()}
+
+
+class ServiceAccept(Data):
+    _identifier = SSH_MSG_SERVICE_ACCEPT
+    _fields = {'ServiceName':String()}
+
+class UserauthRequest(Data):
+    _identifier = SSH_MSG_USERAUTH_REQUEST
+    _fields = OrderedDict(
+                      user=String(),
+                      service=String(),
+                      method=String())
+    def _parse(this, p):
+        t, p = super()._parse(p)
+        if t.method.value == b'none':
+            # Nothing more to parse
+            pass
+        else:
+            assert False, "Unknown auth method: %s"%repr(t)
+        return(t,p)
+
+class UserauthSuccess(Data):
+    _identifier = SSH_MSG_USERAUTH_SUCCESS
+    _fields = {}
+
+class ChannelOpen(Data):
+    # RFC4254,5.1
+    _identifier = SSH_MSG_CHANNEL_OPEN
+    _fields = OrderedDict(
+                      chann_type=String(),
+                      sender=Uint32(),
+                      window_size=Uint32(),
+                      max_size=Uint32())
+    def _parse(this, p):
+        t, p = super()._parse(p)
+        if t.chann_type.value == b'session':
+            # Nothing more to parse
+            pass
+        else:
+            assert False, "Unknown channel type: %s"%repr(t)
+        return(t,p)
+
+class ChannelOpenConfirm(Data):
+    # RFC4254,5.1
+    _identifier = SSH_MSG_CHANNEL_OPEN_CONFIRMATION
+    _fields = OrderedDict(
+                      recipient=Uint32(),
+                      sender=Uint32(),
+                      window_size=Uint32(),
+                      max_size=Uint32())
+    def _parse(this, p):
+        t, p = super()._parse(p)
+        if t.chann_type.value == b'session':
+            # Nothing more to parse
+            pass
+        else:
+            assert False, "Unknown channel type: %s"%repr(t)
+        return(t,p)
+
+class Disconnect(Data):
+    # RFC4243,11.1
+    _identifier = SSH_MSG_DISCONNECT
+    _fields = OrderedDict(
+                      reason_code = Uint32(),
+                      description = String(),
+                      lang = String())
 
 
 tmp = [eval(d) for d in dir()]

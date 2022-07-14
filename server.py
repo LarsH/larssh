@@ -182,8 +182,20 @@ class Transport(object):
 		this.sc_aes = aes(key_sc, 6, iv_sc)
 		this.cs_aes = aes(key_cs, 6, iv_cs)
 
-		this.sendDebug('Testing encryption and MAC')
-		print(this.parsePacket(this.getPacket()))
+		tmp = this.getPacket()
+		serviceReq = this.parsePacket(tmp)
+
+		this.sendPacket(ServiceAccept(ServiceName=serviceReq.ServiceName).pack())
+		tmp = this.getPacket()
+		packet = this.parsePacket(tmp)
+		this.sendPacket(UserauthSuccess()) # Accepting any auth attempt
+
+		while packet._identifier != SSH_MSG_DISCONNECT:
+			tmp = this.getPacket()
+			print(tmp)
+			packet = this.parsePacket(tmp)
+			print(packet)
+
 
 	def sendDebug(this, message):
 		if message.__class__ is str:
@@ -256,7 +268,7 @@ class Transport(object):
 			retval = packet_parsers[packet_type]().parse(p)
 			return retval
 		else:
-			assert False, "Unknown packet type for packet: %s"%repr(p)
+			assert False, "Unknown packet type %u for packet: %s"%(p[0] , repr(p))
 
 t = Transport()
 t.run()
