@@ -64,6 +64,22 @@ class HostKey(object):
 
 HOST_KEY = HostKey(hostkey.n, hostkey.e, hostkey.d)
 
+class Session():
+	def __init__(this, sender, window_size, max_size):
+		this.sender = sender
+		this.window_size = window_size
+		this.max_size = max_size
+		this.globals = {}
+		this.locals = {}
+
+	def request(this, req):
+		pass
+		#print("Ignoring request:", req)
+
+	def data(this, data):
+		print("Ignoring data:", data)
+
+
 class Transport(object):
 	def __init__(this, addr=ADDR):
 		this.mac_len = 0
@@ -81,7 +97,10 @@ class Transport(object):
 		this.cs_packet_count = 0
 		this.sc_packet_count = 0
 
+		this.channels = []
+
 		this.serv = socket.socket()
+
 		for i in range(10):
 			try:
 				ai = socket.getaddrinfo(*addr)
@@ -192,9 +211,38 @@ class Transport(object):
 
 		while packet._identifier != SSH_MSG_DISCONNECT:
 			tmp = this.getPacket()
-			print(tmp)
 			packet = this.parsePacket(tmp)
-			print(packet)
+
+			if packet._identifier == SSH_MSG_CHANNEL_OPEN:
+				idx = len(this.channels)
+				s = Session(packet.sender.value,
+						packet.window_size.value,
+						packet.max_size.value)
+				this.channels.append(s)
+				r = ChannelOpenConfirm(recipient=Uint32(idx),
+						sender=packet.sender,
+						window_size=Uint32(s.window_size),
+						max_size=Uint32(s.max_size))
+				this.sendPacket(r)
+
+			elif packet._identifier == SSH_MSG_CHANNEL_REQUEST:
+				this.channels[packet.recipient.value].request(packet)
+			elif packet._identifier == SSH_MSG_CHANNEL_DATA:
+				r = packet.recipient.value
+				c = this.channels[r]
+				data = packet.data.value
+				if data == b'\x04':
+					# Ctrl-D received
+					this.sendPacket(ChannelClose(recipient=Uint32(r)))
+					continue
+
+				c.data(data)
+				# Echoing reply
+				packet.recipient.value = c.sender
+				this.sendPacket(packet)
+			else:
+				print(packet._identifier)
+				print(packet)
 
 
 	def sendDebug(this, message):

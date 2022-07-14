@@ -13,6 +13,9 @@ SSH_MSG_USERAUTH_REQUEST = 50
 SSH_MSG_USERAUTH_SUCCESS = 52
 SSH_MSG_CHANNEL_OPEN = 90
 SSH_MSG_CHANNEL_OPEN_CONFIRMATION = 91
+SSH_MSG_CHANNEL_DATA = 94
+SSH_MSG_CHANNEL_CLOSE = 97
+SSH_MSG_CHANNEL_REQUEST = 98
 
 
 class KexInit(Data):
@@ -151,6 +154,69 @@ class Disconnect(Data):
                       lang = String())
 
 
+class ChannelRequest(Data):
+    # RFC4254,5.4
+    _identifier = SSH_MSG_CHANNEL_REQUEST
+    _fields = OrderedDict(
+                      recipient=Uint32(),
+                      req_type=String(),
+                      wantReply=Bool())
+    def _parse(this, p):
+        t,p2 = super()._parse(p)
+        if t.req_type.value == b'pty-req':
+            # Parse the packet start again
+            t,p2 = ChannelRequestPty()._parse(p)
+        elif t.req_type.value == b'env':
+            t,p2 = ChannelRequestEnv()._parse(p)
+        elif t.req_type.value == b'shell':
+            # RFC4254,6.5: Starting a Shell or a Command
+            pass
+        else:
+            assert False, "Unknown channel request: %s"%repr(t)
+        return(t,p2)
+
+class ChannelData(Data):
+    # RFC4243,11.1
+    _identifier = SSH_MSG_CHANNEL_DATA
+    _fields = OrderedDict(
+                      recipient = Uint32(),
+                      data = String())
+
+class ChannelClose(Data):
+    # RFC4254,5.3
+    _identifier = SSH_MSG_CHANNEL_CLOSE
+    _fields = OrderedDict(recipient=Uint32())
+
+##
+# General parsers MUST be defined BEFORE the definition of packet_parsers
+
 tmp = [eval(d) for d in dir()]
 packet_parsers = {e._identifier: e for e in tmp if hasattr(e, '_identifier')}
 del tmp
+
+##
+# Specific parsers MUST be defined AFTER the definition of packet_parsers
+
+class ChannelRequestPty(Data):
+    # RFC4254,6.2
+    _identifier = SSH_MSG_CHANNEL_REQUEST
+    _fields = OrderedDict(
+                      recipient=Uint32(),
+                      req_type=String(),
+                      wantReply=Bool(),
+                      term=String(),
+                      width_c=Uint32(),
+                      height_c=Uint32(),
+                      width_px=Uint32(),
+                      height_px=Uint32(),
+                      modes=String())
+
+class ChannelRequestEnv(Data):
+    # RFC4254,6.4 Environment Variable Passing
+    _identifier = SSH_MSG_CHANNEL_REQUEST
+    _fields = OrderedDict(
+                      recipient=Uint32(),
+                      req_type=String(),
+                      wantReply=Bool(),
+                      name=String(),
+                      value=String())
