@@ -64,20 +64,83 @@ class HostKey(object):
 
 HOST_KEY = HostKey(hostkey.n, hostkey.e, hostkey.d)
 
+class Shell():
+	def __init__(this):
+		this.buf = b''
+
+	def interact(this, data):
+		shouldClose = b'\x04' in data
+		return data, shouldClose
+
+class SFTP():
+	def __init__(this):
+		this.buf = b''
+
+	def interact(this, data):
+		shouldClose = False
+		reply = b''
+
+		this.buf += data
+
+		while True:
+			if len(this.buf) < 5:
+				break
+
+			l = int.from_bytes(data[:4],'big')
+			if len(this.buf) < (4+l):
+				break
+
+			t = this.buf[4]
+			content = this.buf[5:4+l]
+			this.buf = this.buf[4+l:]
+			print("SFTP:", t, content)
+			if t == 1:
+				# SSH_FXP_INIT
+				reply += struct.pack(">IBI", 5, 2, 3)
+			else:
+				print("Unhandled packet")
+				shouldClose = True
+
+		return reply, shouldClose
+
+
 class Session():
 	def __init__(this, sender, window_size, max_size):
 		this.sender = sender
 		this.window_size = window_size
 		this.max_size = max_size
-		this.globals = {}
-		this.locals = {}
+		this.endpoint = None
 
 	def request(this, req):
-		pass
-		#print("Ignoring request:", req)
+		t = req.req_type.value
+		if t == b'env':
+			# ignoring environment variables
+			return False
+		elif t == b'pty-req':
+			# ignoring pseudo terminals
+			return False
+		elif t == b'shell':
+			if this.endpoint == None:
+				this.endpoint = Shell()
+				return True
+			else:
+				# Already allocated an endpoint
+				return False
+		elif t == b'subsystem':
+			if this.endpoint == None:
+				this.endpoint = SFTP()
+				return True
+		else:
+			print("Unknown request:", req)
+
+		return False
 
 	def data(this, data):
-		print("Ignoring data:", data)
+		if this.endpoint == None:
+			print("No endpoint, ignoring data:", data)
+			return b'', False
+		else:
+			return this.endpoint.interact(data)
 
 
 class Transport(object):
@@ -187,7 +250,7 @@ class Transport(object):
 				retval += hashlib.sha256(K.pack() + H + retval).digest()
 			return retval[:l]
 
-		this.sendPacket(nkpacket.pack())
+		this.sendPacket(nkpacket)
 
 		iv_cs = HASH(b'A', 16)
 		iv_sc = HASH(b'B', 16)
@@ -204,7 +267,7 @@ class Transport(object):
 		tmp = this.getPacket()
 		serviceReq = this.parsePacket(tmp)
 
-		this.sendPacket(ServiceAccept(ServiceName=serviceReq.ServiceName).pack())
+		this.sendPacket(ServiceAccept(ServiceName=serviceReq.ServiceName))
 		tmp = this.getPacket()
 		packet = this.parsePacket(tmp)
 		this.sendPacket(UserauthSuccess()) # Accepting any auth attempt
@@ -226,20 +289,26 @@ class Transport(object):
 				this.sendPacket(r)
 
 			elif packet._identifier == SSH_MSG_CHANNEL_REQUEST:
-				this.channels[packet.recipient.value].request(packet)
+				c = packet.recipient.value
+				wasSuccess = this.channels[c].request(packet)
+				if packet.wantReply.value:
+					c = Uint32(c)
+					if wasSuccess:
+						pkt = ChannelSuccess(recipient=c)
+					else:
+						pkt = ChannelFailure(recipient=c)
+					this.sendPacket(pkt)
+
 			elif packet._identifier == SSH_MSG_CHANNEL_DATA:
 				r = packet.recipient.value
 				c = this.channels[r]
 				data = packet.data.value
-				if data == b'\x04':
-					# Ctrl-D received
-					this.sendPacket(ChannelClose(recipient=Uint32(r)))
-					continue
 
-				c.data(data)
-				# Echoing reply
+				packet.data.value, shouldClose  = c.data(data)
 				packet.recipient.value = c.sender
 				this.sendPacket(packet)
+				if shouldClose:
+					this.sendPacket(ChannelClose(recipient=Uint32(r)))
 			else:
 				print(packet._identifier)
 				print(packet)
@@ -283,8 +352,7 @@ class Transport(object):
 		return payload
 
 	def sendPacket(this, payload):
-		if payload.__class__ is not bytes:
-			payload = payload.pack()
+		payload = payload.pack()
 		block_len = 16
 		min_padding = 4
 		padding_len = min_padding + block_len - (min_padding + 5 + len(payload))%block_len

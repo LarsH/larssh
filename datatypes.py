@@ -14,8 +14,10 @@ SSH_MSG_USERAUTH_SUCCESS = 52
 SSH_MSG_CHANNEL_OPEN = 90
 SSH_MSG_CHANNEL_OPEN_CONFIRMATION = 91
 SSH_MSG_CHANNEL_DATA = 94
+SSH_MSG_CHANNEL_EOF = 96
 SSH_MSG_CHANNEL_CLOSE = 97
 SSH_MSG_CHANNEL_REQUEST = 98
+SSH_MSG_CHANNEL_SUCCESS = 99
 
 
 class KexInit(Data):
@@ -171,8 +173,10 @@ class ChannelRequest(Data):
         elif t.req_type.value == b'shell':
             # RFC4254,6.5: Starting a Shell or a Command
             pass
+        elif t.req_type.value == b'subsystem':
+            t,p2 = ChannelRequestSubsystem()._parse(p)
         else:
-            assert False, "Unknown channel request: %s"%repr(t)
+            assert False, "Unknown channel request: %s"%repr((t,p))
         return(t,p2)
 
 class ChannelData(Data):
@@ -182,10 +186,29 @@ class ChannelData(Data):
                       recipient = Uint32(),
                       data = String())
 
+
+class ChannelEOF(Data):
+    # RFC4354,5.3 Closing a channel
+    _identifier = SSH_MSG_CHANNEL_EOF
+    _fields = OrderedDict(recipient=Uint32())
+
+
 class ChannelClose(Data):
-    # RFC4254,5.3
+    # RFC4254,5.3 Closing a channel
     _identifier = SSH_MSG_CHANNEL_CLOSE
     _fields = OrderedDict(recipient=Uint32())
+
+
+class ChannelSuccess(Data):
+    _identifier = SSH_MSG_CHANNEL_SUCCESS
+    _fields = {'recipient':Uint32()}
+
+
+class ChannelFailure(Data):
+    _identifier = SSH_MSG_CHANNEL_SUCCESS
+    _fields = {'recipient':Uint32()}
+
+
 
 ##
 # General parsers MUST be defined BEFORE the definition of packet_parsers
@@ -220,3 +243,12 @@ class ChannelRequestEnv(Data):
                       wantReply=Bool(),
                       name=String(),
                       value=String())
+
+class ChannelRequestSubsystem(Data):
+    # RFC4254,6.4 Environment Variable Passing
+    _identifier = SSH_MSG_CHANNEL_REQUEST
+    _fields = OrderedDict(
+                      recipient=Uint32(),
+                      req_type=String(),
+                      wantReply=Bool(),
+                      name=String())
