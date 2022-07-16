@@ -398,7 +398,7 @@ def server_thread_func(addr, port):
 	while True:
 		clientSock, _ = serv.accept()
 		t = Transport(clientSock)
-		_thread.start_new_thread(t.run,())
+		t.run()
 
 def startServer(addr='0.0.0.0',port=22):
 	_thread.start_new_thread(server_thread_func, (addr,port))
