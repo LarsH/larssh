@@ -43,7 +43,7 @@ def hmac(key, data):
 
 class HostKey(object):
 	def __init__(this, n,e,d):
-		assert pow(pow(1337,e,n),d,n) == 1337
+		# assert pow(pow(1337,e,n),d,n) == 1337
 		assert (1<<2047) < n < (1<<2048)
 		this.len = 2048
 		this.n = n
@@ -178,11 +178,9 @@ class Session():
 
 
 class Transport(object):
-	def __init__(this, addr=ADDR):
+	def __init__(this, conn):
 		this.mac_len = 0
-		this.serv = None # Must be set for destructor to not complain
-		this.conn = None
-		this.remoteAddr = None
+		this.conn = conn
 		this.sess_id = None
 
 		this.sc_aes = None
@@ -196,24 +194,8 @@ class Transport(object):
 
 		this.channels = []
 
-		this.serv = socket.socket()
-
-		for i in range(10):
-			try:
-				ai = socket.getaddrinfo(*addr)
-				this.serv.bind(ai[0][-1])
-				break
-			except OSError as e:
-				print(e)
-				addr = (addr[0], addr[1]+1)
-		else:
-			assert False, "Could not bind port"
-		print("Listening on", addr)
-		this.serv.listen()
 
 	def run(this):
-		this.conn, this.remoteAddr = this.serv.accept()
-
 		# We received a connection, sending our ID string
 		# RFC4253 Section 4.2
 		this.conn.send(IDSTRING + b'\r\n')
@@ -399,8 +381,6 @@ class Transport(object):
 		return payload
 
 	def sendPacket(this, payload):
-		if payload.__class__ != ChannelData:
-			print(repr(payload).replace('\\','')[:100])
 		payload = payload.pack()
 		block_len = 16
 		min_padding = 4
@@ -422,10 +402,7 @@ class Transport(object):
 		this.sc_packet_count += 1
 
 	def __del__(this):
-		print("Closing...")
-		if not (this.conn is None):
-			this.conn.close()
-		this.serv.close()
+		this.conn.close()
 
 	def parsePacket(this, p):
 		packet_type = p[0]
@@ -435,5 +412,18 @@ class Transport(object):
 		else:
 			assert False, "Unknown packet type %u for packet: %s"%(p[0] , repr(p))
 
-t = Transport()
-_thread.start_new_thread(t.run,())
+def server_thread_func(addr, port):
+	serv = socket.socket()
+
+	ai = socket.getaddrinfo(addr, port)
+	serv.bind(ai[0][-1])
+
+	serv.listen()
+
+	while True:
+		clientSock, _ = serv.accept()
+		t = Transport(clientSock)
+		_thread.start_new_thread(t.run,())
+
+def startServer(addr='0.0.0.0',port=22):
+	_thread.start_new_thread(server_thread_func, (addr,port))
