@@ -370,18 +370,24 @@ class Transport(object):
 			retval += this.conn.recv(1)
 		return retval
 
+	def recvExactly(this, target):
+		retval = b''
+		while len(retval) < target:
+			retval += this.conn.recv(target-len(retval))
+		return retval
+
 	def getPacket(this):
-		lenbuf = this.conn.recv(4)
+		lenbuf = this.recvExactly(4)
 		if this.cs_aes is not None:
 			lenbuf = this.cs_aes.decrypt(lenbuf)
 		packet_length, = struct.unpack('>I', lenbuf)
 
-		packet = this.conn.recv(packet_length)
+		packet = this.recvExactly(packet_length)
 		if this.cs_aes is not None:
 			packet = this.cs_aes.decrypt(packet)
 
 		if(this.mac_len > 0):
-			mac = this.conn.recv(this.mac_len)
+			mac = this.recvExactly(this.mac_len)
 			t = this.cs_packet_count.to_bytes(4,'big')
 			cmac = hmac(this.mac_key_cs, t+lenbuf+packet)
 			assert mac == cmac
