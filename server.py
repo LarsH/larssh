@@ -3,6 +3,10 @@ import hashlib
 import random
 import struct
 from ucryptolib import aes
+import uio
+import uos
+import _thread
+import sys
 
 from datatypes import *
 import hostkey
@@ -64,13 +68,42 @@ class HostKey(object):
 
 HOST_KEY = HostKey(hostkey.n, hostkey.e, hostkey.d)
 
+class Terminal(uio.IOBase):
+	def __init__(this, writeFunc):
+		this.inputFromClient = b''
+		this.writeFunc = writeFunc
+
+	def write(this, data):
+		this.writeFunc(bytes(data).replace(b'\n',b'\r\n'))
+
+	def read(this, l=None):
+		if len(this.inputFromClient) == 0:
+			return None
+		if l is None:
+			l = len(this.inputFromClient)
+		tmp = this.inputFromClient[:l]
+		this.inputFromClient = this.inputFromClient[l:]
+		return tmp
+
+	def readinto(this, buf):
+		l = len(this.inputFromClient)
+		if l == 0:
+			return None
+		l = min(l, len(buf))
+
+		buf[:l] = this.inputFromClient[:l]
+		this.inputFromClient = this.inputFromClient[l:]
+		return l
+
+
 class Shell():
-	def __init__(this):
-		this.buf = b''
+	def __init__(this, terminal):
+		this.terminal = terminal
 
 	def interact(this, data):
-		shouldClose = b'\x04' in data
-		return data, shouldClose
+		this.terminal.inputFromClient += data
+		shouldClose = False
+		return b'', shouldClose
 
 class SFTP():
 	def __init__(this):
@@ -82,6 +115,7 @@ class SFTP():
 
 		this.buf += data
 
+		# https://datatracker.ietf.org/doc/html/draft-ietf-secsh-filexfer-02
 		while True:
 			if len(this.buf) < 5:
 				break
@@ -111,7 +145,7 @@ class Session():
 		this.max_size = max_size
 		this.endpoint = None
 
-	def request(this, req):
+	def request(this, req, **kwargs):
 		t = req.req_type.value
 		if t == b'env':
 			# ignoring environment variables
@@ -121,7 +155,7 @@ class Session():
 			return False
 		elif t == b'shell':
 			if this.endpoint == None:
-				this.endpoint = Shell()
+				this.endpoint = Shell(kwargs['terminal'])
 				return True
 			else:
 				# Already allocated an endpoint
@@ -192,7 +226,7 @@ class Transport(object):
 		I_C = String(p.pack())
 
 		cookie = bytes(random.getrandbits(8) for _ in range(16))
-		serverkex = KexInit(identifier=Byte(b'\x14'),
+		serverkex = KexInit(
 				cookie=Byte(cookie),
 				kex_algorithms=NameList(value=[b'diffie-hellman-group14-sha256']),
 				server_host_key_algorithms=NameList(value=[b'rsa-sha2-256']),
@@ -232,7 +266,7 @@ class Transport(object):
 
 		# Must be hashed again before signing, paragraph before RFC4253 8.1
 		signature = HOST_KEY.sign(SHA256_prefix + hashlib.sha256(H).digest())
-		reply = KexDHReply(identifier=Byte(SSH_MSG_KEXDH_REPLY),
+		reply = KexDHReply(
 				hostkey=K_S,
 				f=f,
 				sig=String(signature.pack()))
@@ -289,10 +323,16 @@ class Transport(object):
 				this.sendPacket(r)
 
 			elif packet._identifier == SSH_MSG_CHANNEL_REQUEST:
-				c = packet.recipient.value
-				wasSuccess = this.channels[c].request(packet)
+				channel = packet.recipient.value
+				term = None
+				if packet.req_type.value == b'shell':
+					def wfunc(x):
+						this.sendPacket(ChannelData(recipient=Uint32(channel),data=String(x)))
+					term = Terminal(wfunc)
+					uos.dupterm(term)
+				wasSuccess = this.channels[channel].request(packet,terminal=term)
 				if packet.wantReply.value:
-					c = Uint32(c)
+					c = Uint32(channel)
 					if wasSuccess:
 						pkt = ChannelSuccess(recipient=c)
 					else:
@@ -305,8 +345,9 @@ class Transport(object):
 				data = packet.data.value
 
 				packet.data.value, shouldClose  = c.data(data)
-				packet.recipient.value = c.sender
-				this.sendPacket(packet)
+				if len(packet.data.value) > 0:
+					packet.recipient.value = c.sender
+					this.sendPacket(packet)
 				if shouldClose:
 					this.sendPacket(ChannelClose(recipient=Uint32(r)))
 			else:
@@ -352,6 +393,8 @@ class Transport(object):
 		return payload
 
 	def sendPacket(this, payload):
+		if payload.__class__ != ChannelData:
+			print(repr(payload).replace('\\','')[:100])
 		payload = payload.pack()
 		block_len = 16
 		min_padding = 4
@@ -387,4 +430,4 @@ class Transport(object):
 			assert False, "Unknown packet type %u for packet: %s"%(p[0] , repr(p))
 
 t = Transport()
-t.run()
+_thread.start_new_thread(t.run,())
