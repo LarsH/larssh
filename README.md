@@ -2,6 +2,40 @@
 
 This is a small SSH server python implementation.
 
+## Current status (2022-jul-17)
+
+SSH terminal: working, but the key exchange is slow, it takes about a
+minute for a connection to establish on a Raspberry Pico W.
+
+Authentication: Only `none` at the moment
+
+SFTP: not implemented yet
+
+Normal python support: broken
+
+## Installation and setup
+
+1.  Clone this repo
+2.  Generate a hostkey: `./generateHostKey.sh > hostkey.py`
+3.  Copy the following files to the micropython system:
+      - `server.py`
+      - `basic_datatypes.py`
+      - `datatypes.py`
+      - `sftp.py`
+      - `hostkey.py`
+
+## Usage
+
+``` {python}
+import server
+server.startServer()
+```
+
+## Micropython compilation requirements
+
+Micropython must be compiled with `MICROPY_PY_UCRYPTOLIB_CTR` and
+`MICROPY_PY_OS_DUPTERM` (and probably a few other flags).
+
 ## License
 
 Like micropython/micropython, this project is licensed under the MIT
