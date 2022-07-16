@@ -42,10 +42,6 @@ class Data(object):
 		data = [n+'='+repr(getattr(this, n)) for n in this._fields if hasattr(this, n)]
 		return this.__class__.__name__ + '(' + ', '.join(data) + ')'
 
-	def __call__(this):
-		'''For cases when repeated object is already instanciated'''
-		return this
-
 
 class IntData(Data):
 	def __eq__(this, other):

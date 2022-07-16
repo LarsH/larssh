@@ -176,7 +176,8 @@ class ChannelRequest(Data):
         elif t.req_type.value == b'subsystem':
             t,p2 = ChannelRequestSubsystem()._parse(p)
         else:
-            assert False, "Unknown channel request: %s"%repr((t,p))
+            # print("Unknown channel request: %s"%repr((t,p)))
+            p2 = b'' # Ignore the rest; request specific
         return(t,p2)
 
 class ChannelData(Data):

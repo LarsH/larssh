@@ -15,6 +15,12 @@ from sftp import SFTP
 IDSTRING = b'SSH-2.0-pyssh'
 ADDR = ('0.0.0.0', 2222)
 
+PRINT_DEBUG = False
+
+def printdebug(*args):
+	if PRINT_DEBUG:
+		print(*args)
+
 # This is an ASN.1 header indicating that the 32 bytes following
 # it is a sha-256 hash
 SHA256_prefix = b'010\r\x06\t`\x86H\x01e\x03\x04\x02\x01\x05\x00\x04 '
@@ -134,13 +140,13 @@ class Session():
 				this.endpoint = SFTP()
 				return True
 		else:
-			print("Unknown request:", req)
+			printdebug("Unknown request:", t)
 
 		return False
 
 	def data(this, data):
 		if this.endpoint == None:
-			print("No endpoint, ignoring data:", data)
+			printdebug("No endpoint, ignoring data:", data)
 			return b'', False
 		else:
 			return this.endpoint.interact(data)
@@ -302,8 +308,8 @@ class Transport(object):
 				if shouldClose:
 					this.sendPacket(ChannelClose(recipient=Uint32(r)))
 			else:
-				print(packet._identifier)
-				print(packet)
+				printdebug(packet._identifier)
+				printdebug(packet)
 
 
 	def sendDebug(this, message):
