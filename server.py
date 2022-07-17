@@ -7,6 +7,7 @@ import uio
 import uos
 import _thread
 import sys
+import time
 
 from datatypes import *
 import hostkey
@@ -35,6 +36,9 @@ def diffie_hellman_group_14(e):
 		y <<= 32
 		y += random.getrandbits(32)
 
+	# Security/usability tradeoff; decrease the exponent to speedup
+	y %= (1<<128) # Truncate secret exponent to 128 bits
+
 	f = pow(g, y, p)
 	K = pow(e, y, p)
 	return f, K
@@ -49,13 +53,18 @@ def hmac(key, data):
 
 
 class HostKey(object):
-	def __init__(this, n,e,d):
+	def __init__(this, n,e,d,p,q,dP,dQ,qInv):
 		# assert pow(pow(1337,e,n),d,n) == 1337
 		assert (1<<2047) < n < (1<<2048)
 		this.len = 2048
 		this.n = n
 		this.e = e
 		this.d = d
+		this.p = p
+		this.q = q
+		this.dP = dP
+		this.dQ = dQ
+		this.qInv = qInv
 
 	def pubkey(this):
 		return PubKey(keytype=String(b'ssh-rsa'),
@@ -70,10 +79,18 @@ class HostKey(object):
 
 
 		m = int.from_bytes(data,'big')
-		c = pow(m,this.d,this.n)
+
+
+		# This is RSA-CRT (gives a ~4x speedup to vanilla RSA)
+		c1 = pow(m,this.dP,this.p)
+		c2 = pow(m,this.dQ,this.q)
+		h = (this.qInv*(c1-c2))%this.p
+		c = c2 + h*this.q
+		# assert c = pow(m,this.d,this.n)
+
 		return Sig(sigtype=String(b'rsa-sha2-256'), sig=String(c.to_bytes(this.len//8,'big')))
 
-HOST_KEY = HostKey(hostkey.n, hostkey.e, hostkey.d)
+HOST_KEY = HostKey(hostkey.n, hostkey.e, hostkey.d, hostkey.p, hostkey.q, hostkey.dP, hostkey.dQ, hostkey.qInv)
 
 class Terminal(uio.IOBase):
 	def __init__(this, writeFunc):
@@ -171,6 +188,7 @@ class Transport(object):
 
 
 	def run(this):
+		start = time.time()
 		# We received a connection, sending our ID string
 		# RFC4253 Section 4.2
 		this.conn.send(IDSTRING + b'\r\n')
@@ -204,7 +222,9 @@ class Transport(object):
 		clientKex = this.parsePacket(data)
 		assert clientKex.__class__ is KexDHInit, clientKex
 
+		this.sendDebug('Starting DH @ ' + repr(time.time()-start))
 		f, K = map(Mpint, diffie_hellman_group_14(clientKex.e.value))
+		this.sendDebug('Preparing data to hash @ ' + repr(time.time()-start))
 
 		K_S=String(HOST_KEY.pubkey().pack())
 		tmp = DataToHash(V_C=String(client_id),
@@ -221,12 +241,14 @@ class Transport(object):
 			# RFC4253 7.2: first exchange hash is session id
 			this.sess_id = H
 
+		this.sendDebug('Starting signing @ ' + repr(time.time()-start))
 		# Must be hashed again before signing, paragraph before RFC4253 8.1
 		signature = HOST_KEY.sign(SHA256_prefix + hashlib.sha256(H).digest())
 		reply = KexDHReply(
 				hostkey=K_S,
 				f=f,
 				sig=String(signature.pack()))
+		this.sendDebug('Signing done @ ' + repr(time.time()-start))
 
 		this.sendPacket(reply)
 
@@ -262,6 +284,8 @@ class Transport(object):
 		tmp = this.getPacket()
 		packet = this.parsePacket(tmp)
 		this.sendPacket(UserauthSuccess()) # Accepting any auth attempt
+
+		this.sendDebug('Transport loop reached @ ' + repr(time.time()-start))
 
 		while packet._identifier != SSH_MSG_DISCONNECT:
 			tmp = this.getPacket()
@@ -319,7 +343,7 @@ class Transport(object):
 				always_display=Bool(True),
 				message=String(message),
 				lang=String(b''))
-		this.sendPacket(d.pack())
+		this.sendPacket(d)
 
 	def recvuntil(this, target):
 		retval = b''

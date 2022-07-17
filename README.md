@@ -4,8 +4,8 @@ This is a small SSH server python implementation.
 
 ## Current status (2022-jul-17)
 
-SSH terminal: working, but the key exchange is slow, it takes about a
-minute for a connection to establish on a Raspberry Pico W.
+SSH terminal: working, connection to a a Raspberry Pico W takes 15
+seconds. (DH: 5s, Signing with 2048 bit host key: 9s)
 
 Authentication: Only `none` at the moment
 
@@ -26,10 +26,15 @@ Normal python support: broken
 
 ## Usage
 
+First make sure the micropython system has a working network connection,
+then run
+
 ``` {python}
 import server
 server.startServer()
 ```
+
+This will start a thread in the background listening on port 22.
 
 ## Micropython compilation requirements
 
