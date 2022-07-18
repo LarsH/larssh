@@ -120,7 +120,7 @@ class Uint64(IntData):
 		return 'Uint64(%s)' % repr(this.value)
 
 	def pack(this):
-		return struct.pack('>L', this.value)
+		return struct.pack('>Q', this.value)
 
 
 class Bool(Data):
